@@ -1,0 +1,18 @@
+{
+  "timestamp": "2025-05-22 21:20:02.413593",
+  "configuration": {
+    "embedding_model": "sentence-transformers/all-mpnet-base-v2",
+    "embedding_dimension": 768,
+    "embedding_batch_size": 12,
+    "qdrant_batch_size": 100,
+    "use_gpu": true,
+    "use_half_precision": true
+  },
+  "results": {
+    "chunks_processed": 372,
+    "embeddings_generated": 372,
+    "points_uploaded": 372,
+    "final_collection_size": 0
+  },
+  "collection_info": {}
+}

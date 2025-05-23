@@ -1,0 +1,92 @@
+{
+  "processing_config": {
+    "chunk_size": 1000,
+    "chunk_overlap": 200
+  },
+  "totals": {
+    "unique_papers": 5,
+    "total_chunks": 372,
+    "total_characters": 350843,
+    "average_chunk_size": 943.13
+  },
+  "chunk_size_distribution": {
+    "min": 343,
+    "max": 1000,
+    "median": 957
+  },
+  "content_type_distribution": {
+    "title_section": 5,
+    "introduction": 15,
+    "general_content": 151,
+    "results": 101,
+    "methodology": 82,
+    "discussion": 15,
+    "references": 2,
+    "conclusion": 1
+  },
+  "journal_distribution": {
+    "Toxics": 108,
+    "Molecular Biology and Evolution": 75,
+    "BMC Medical Education": 59,
+    "Frontiers in Marine Science": 63,
+    "PLOS ONE": 67
+  },
+  "top_keywords": [
+    [
+      "moths and butterflies",
+      67
+    ],
+    [
+      "apples",
+      67
+    ],
+    [
+      "fruits",
+      67
+    ],
+    [
+      "population genetics",
+      67
+    ],
+    [
+      "genetic loci",
+      67
+    ],
+    [
+      "genetics",
+      67
+    ],
+    [
+      "crop genetics",
+      67
+    ],
+    [
+      "phylogeography",
+      67
+    ],
+    [
+      "floating marine litter",
+      63
+    ],
+    [
+      "litter windrows",
+      63
+    ],
+    [
+      "bay of biscay",
+      63
+    ],
+    [
+      "active fishing for litter",
+      63
+    ],
+    [
+      "coastal integrated management",
+      63
+    ],
+    [
+      "life lema",
+      63
+    ]
+  ]
+}

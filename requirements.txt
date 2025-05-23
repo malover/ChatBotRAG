@@ -1,0 +1,29 @@
+# Environment management
+python-dotenv==1.0.0
+
+# Web scraping
+requests==2.31.0
+beautifulsoup4==4.12.2
+lxml==4.9.3
+
+# Data processing
+tqdm==4.66.1
+
+# GPU-accelerated ML libraries
+sentence-transformers==2.2.2
+transformers==4.35.0
+accelerate==0.24.0
+
+# Vector database
+qdrant-client==1.7.0
+
+# Scientific computing
+numpy==1.24.0
+
+# Optional: For even better GPU performance (uncomment after installing PyTorch)
+# xformers==0.0.22  # Memory-efficient attention
+# bitsandbytes==0.41.3  # 8-bit inference
+
+# Monitoring (optional)
+# psutil==5.9.6  # For monitoring GPU/CPU usage
+# gpustat==1.1.1  # For GPU monitoring
