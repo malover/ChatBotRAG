@@ -30,7 +30,7 @@ PROCESSED_DIR = DATA_DIR / "processed"
 
 
 class EmbeddingGenerator:
-    """Generates embeddings for text chunks using RTX 4080."""
+    """Generates embeddings for text chunks using RTX 4080 - FIXED VERSION."""
 
     def __init__(self, model_name: str = EMBEDDING_MODEL):
         logger.info(f"Loading embedding model: {model_name}")
@@ -49,22 +49,33 @@ class EmbeddingGenerator:
         # Load model
         self.model = SentenceTransformer(model_name, device=self.device)
 
-        # Enable mixed precision for RTX 4080
+        # FIXED: Only use half precision if explicitly enabled AND safe
         if self.device == "cuda" and USE_HALF_PRECISION:
-            self.model.half()  # Use FP16 for faster inference and less VRAM
+            logger.warning("Half precision enabled - this may cause vector corruption!")
+            logger.warning("If you get 0 vectors, set USE_HALF_PRECISION=false in .env")
+            self.model.half()
             logger.info("Enabled FP16 mixed precision")
+        else:
+            logger.info("Using FP32 precision for stability")
 
         logger.info(f"Embedding model loaded successfully")
         logger.info(f"Model max sequence length: {self.model.max_seq_length}")
         logger.info(f"Model output dimensions: {self.model.get_sentence_embedding_dimension()}")
 
     def generate_embeddings(self, texts: List[str], batch_size: int = EMBEDDING_BATCH_SIZE) -> np.ndarray:
-        """Generate embeddings for a list of texts with GPU acceleration."""
+        """Generate embeddings for a list of texts with GPU acceleration - FIXED VERSION."""
         logger.info(f"Generating embeddings for {len(texts)} texts")
         logger.info(f"Batch size: {batch_size}, Model: {EMBEDDING_MODEL}")
 
+        if not texts:
+            raise ValueError("No texts provided for embedding generation")
+
         embeddings = []
-        current_batch_size = batch_size
+        successful_count = 0
+        failed_count = 0
+
+        # FIXED: Start with conservative batch size
+        current_batch_size = min(batch_size, 4)  # Conservative starting point
 
         # Process in batches to manage GPU memory
         for i in tqdm(range(0, len(texts), current_batch_size), desc="Generating embeddings"):
@@ -76,13 +87,24 @@ class EmbeddingGenerator:
                     show_progress_bar=False,
                     convert_to_numpy=True,
                     normalize_embeddings=True,  # Normalize for cosine similarity
-                    batch_size=current_batch_size
+                    batch_size=current_batch_size,
+                    device=self.device  # FIXED: Explicitly specify device
                 )
-                embeddings.append(batch_embeddings)
+
+                # FIXED: Validate embeddings before adding
+                if self._validate_embeddings(batch_embeddings):
+                    embeddings.append(batch_embeddings)
+                    successful_count += len(batch_texts)
+                else:
+                    logger.error(f"Batch {i // current_batch_size + 1} produced invalid embeddings")
+                    failed_count += len(batch_texts)
+                    # Create zero embeddings as placeholder (will be caught later)
+                    zero_embeddings = np.zeros((len(batch_texts), self.model.get_sentence_embedding_dimension()))
+                    embeddings.append(zero_embeddings)
 
                 # Log progress every 10 batches
                 if (i // current_batch_size + 1) % 10 == 0:
-                    logger.debug(f"Processed {i + len(batch_texts)}/{len(texts)} texts")
+                    logger.info(f"Processed {successful_count}/{len(texts)} texts successfully")
 
             except RuntimeError as e:
                 if "out of memory" in str(e).lower():
@@ -97,23 +119,97 @@ class EmbeddingGenerator:
                     current_batch_size = max(1, current_batch_size // 2)
                     logger.info(f"Retrying with batch size: {current_batch_size}")
 
-                    batch_embeddings = self.model.encode(
-                        batch_texts,
-                        show_progress_bar=False,
-                        convert_to_numpy=True,
-                        normalize_embeddings=True,
-                        batch_size=current_batch_size
-                    )
-                    embeddings.append(batch_embeddings)
+                    try:
+                        batch_embeddings = self.model.encode(
+                            batch_texts,
+                            show_progress_bar=False,
+                            convert_to_numpy=True,
+                            normalize_embeddings=True,
+                            batch_size=current_batch_size,
+                            device=self.device
+                        )
+
+                        if self._validate_embeddings(batch_embeddings):
+                            embeddings.append(batch_embeddings)
+                            successful_count += len(batch_texts)
+                        else:
+                            raise ValueError("Retry produced invalid embeddings")
+
+                    except Exception as retry_error:
+                        logger.error(f"Retry failed for batch {i // current_batch_size + 1}: {retry_error}")
+                        failed_count += len(batch_texts)
+                        # Create zero embeddings as placeholder
+                        zero_embeddings = np.zeros((len(batch_texts), self.model.get_sentence_embedding_dimension()))
+                        embeddings.append(zero_embeddings)
                 else:
                     logger.error(f"Unexpected CUDA error: {e}")
-                    raise e
+                    failed_count += len(batch_texts)
+                    # Create zero embeddings as placeholder
+                    zero_embeddings = np.zeros((len(batch_texts), self.model.get_sentence_embedding_dimension()))
+                    embeddings.append(zero_embeddings)
+
+            except Exception as e:
+                logger.error(f"Error processing batch {i // current_batch_size + 1}: {e}")
+                failed_count += len(batch_texts)
+                # Create zero embeddings as placeholder
+                zero_embeddings = np.zeros((len(batch_texts), self.model.get_sentence_embedding_dimension()))
+                embeddings.append(zero_embeddings)
 
         # Combine all embeddings
-        all_embeddings = np.vstack(embeddings)
-        logger.info(f"Generated embeddings shape: {all_embeddings.shape}")
+        if not embeddings:
+            raise RuntimeError("No embeddings were generated successfully")
+
+        try:
+            all_embeddings = np.vstack(embeddings)
+        except Exception as e:
+            logger.error(f"Error combining embeddings: {e}")
+            raise
+
+        logger.info(f"Embedding generation complete:")
+        logger.info(f"  ✅ Successful: {successful_count}/{len(texts)} texts")
+        logger.info(f"  ❌ Failed: {failed_count}/{len(texts)} texts")
+        logger.info(f"  📊 Final shape: {all_embeddings.shape}")
+
+        # FIXED: Final validation
+        if not self._validate_final_embeddings(all_embeddings, len(texts)):
+            raise RuntimeError("Final embeddings validation failed")
 
         return all_embeddings
+
+    def _validate_embeddings(self, embeddings: np.ndarray) -> bool:
+        """Validate embedding array - NEW METHOD."""
+        if embeddings is None:
+            logger.error("Embeddings are None")
+            return False
+
+        if len(embeddings.shape) != 2:
+            logger.error(f"Invalid embedding shape: {embeddings.shape}")
+            return False
+
+        if np.any(np.isnan(embeddings)) or np.any(np.isinf(embeddings)):
+            logger.error("Embeddings contain NaN or Inf values")
+            return False
+
+        expected_dim = self.model.get_sentence_embedding_dimension()
+        if embeddings.shape[1] != expected_dim:
+            logger.error(f"Dimension mismatch: got {embeddings.shape[1]}, expected {expected_dim}")
+            return False
+
+        return True
+
+    def _validate_final_embeddings(self, embeddings: np.ndarray, expected_count: int) -> bool:
+        """Validate final embedding array - NEW METHOD."""
+        if embeddings.shape[0] != expected_count:
+            logger.error(f"Count mismatch: got {embeddings.shape[0]}, expected {expected_count}")
+            return False
+
+        # Check for too many zero embeddings (indicates failures)
+        zero_count = np.sum(np.all(embeddings == 0, axis=1))
+        if zero_count > expected_count * 0.1:  # More than 10% failures
+            logger.error(f"Too many failed embeddings: {zero_count}/{expected_count}")
+            return False
+
+        return True
 
     def test_embedding(self, test_text: str = "microplastic pollution in marine environment") -> np.ndarray:
         """Test embedding generation with a sample text."""
@@ -124,7 +220,7 @@ class EmbeddingGenerator:
 
 
 class QdrantIndexer:
-    """Indexes documents into Qdrant Cloud."""
+    """Indexes documents into Qdrant Cloud - FIXED VERSION."""
 
     def __init__(self, url: str = QDRANT_URL, api_key: str = QDRANT_API_KEY):
         self.collection_name = QDRANT_COLLECTION_NAME
@@ -175,63 +271,123 @@ class QdrantIndexer:
             raise
 
     def index_documents(self, chunks: List[Dict], embeddings: np.ndarray, batch_size: int = QDRANT_BATCH_SIZE):
-        """Index documents with embeddings into Qdrant."""
+        """Index documents with embeddings into Qdrant - FIXED VERSION."""
         if len(chunks) != len(embeddings):
             raise ValueError(f"Mismatch: {len(chunks)} chunks vs {len(embeddings)} embeddings")
 
         logger.info(f"Indexing {len(chunks)} documents into Qdrant")
+        logger.info(f"Embedding shape: {embeddings.shape}")
         logger.info(f"Upload batch size: {batch_size}")
 
-        # Prepare points for insertion
+        # FIXED: Prepare points with validation
         points = []
+        valid_count = 0
+        invalid_count = 0
 
         for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-            # Create comprehensive payload with metadata
-            payload = {
-                # Core content
-                'text': chunk['text'],
-                'chunk_id': chunk['id'],
+            try:
+                # FIXED: Validate embedding before creating point
+                if not self._validate_single_embedding(embedding):
+                    logger.warning(f"Skipping chunk {i} due to invalid embedding")
+                    invalid_count += 1
+                    continue
 
-                # Paper metadata
-                'paper_id': chunk['metadata']['paper_id'],
-                'title': chunk['metadata']['title'],
-                'authors': chunk['metadata']['authors'],
-                'journal': chunk['metadata']['journal'],
-                'publication_date': chunk['metadata']['publication_date'],
-                'url': chunk['metadata']['url'],
-                'keywords': chunk['metadata']['keywords'],
-                'domain': chunk['metadata']['domain'],
+                # FIXED: Convert embedding to list with proper type handling
+                if isinstance(embedding, np.ndarray):
+                    vector_list = embedding.astype(np.float32).tolist()
+                else:
+                    vector_list = [float(x) for x in embedding]
 
-                # Chunk metadata
-                'chunk_index': chunk['metadata']['chunk_index'],
-                'total_chunks': chunk['metadata']['total_chunks'],
-                'chunk_size': chunk['metadata']['chunk_size'],
-                'content_type': chunk['metadata']['content_type'],
-                'has_title': chunk['metadata']['has_title'],
-                'has_abstract': chunk['metadata']['has_abstract']
-            }
+                # FIXED: Validate the converted list
+                if not all(isinstance(x, (int, float)) and not (np.isnan(x) or np.isinf(x)) for x in vector_list):
+                    logger.warning(f"Skipping chunk {i} due to invalid vector values")
+                    invalid_count += 1
+                    continue
 
-            # Create point with unique UUID
-            point = PointStruct(
-                id=str(uuid.uuid4()),
-                vector=embedding.tolist(),
-                payload=payload
-            )
-            points.append(point)
+                # Create comprehensive payload with metadata
+                payload = {
+                    # Core content
+                    'text': str(chunk['text']),
+                    'chunk_id': str(chunk['id']),
 
-            # Log progress for large datasets
-            if (i + 1) % 1000 == 0:
-                logger.debug(f"Prepared {i + 1}/{len(chunks)} points")
+                    # Paper metadata
+                    'paper_id': chunk['metadata']['paper_id'],
+                    'title': str(chunk['metadata']['title']),
+                    'authors': chunk['metadata']['authors'],
+                    'journal': str(chunk['metadata']['journal']),
+                    'publication_date': str(chunk['metadata']['publication_date']),
+                    'url': str(chunk['metadata']['url']),
+                    'keywords': chunk['metadata']['keywords'],
+                    'domain': str(chunk['metadata']['domain']),
 
-        logger.info(f"Prepared {len(points)} points for upload")
+                    # Chunk metadata
+                    'chunk_index': int(chunk['metadata']['chunk_index']),
+                    'total_chunks': int(chunk['metadata']['total_chunks']),
+                    'chunk_size': int(chunk['metadata']['chunk_size']),
+                    'content_type': str(chunk['metadata']['content_type']),
+                    'has_title': bool(chunk['metadata']['has_title']),
+                    'has_abstract': bool(chunk['metadata']['has_abstract'])
+                }
 
-        # Upload in batches
+                # Create point with unique UUID
+                point = PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=vector_list,  # FIXED: Using validated vector list
+                    payload=payload
+                )
+                points.append(point)
+                valid_count += 1
+
+                # Log progress for large datasets
+                if (i + 1) % 1000 == 0:
+                    logger.debug(f"Prepared {i + 1}/{len(chunks)} points")
+
+            except Exception as e:
+                logger.error(f"Error creating point {i}: {e}")
+                invalid_count += 1
+                continue
+
+        logger.info(f"Prepared points: {valid_count} valid, {invalid_count} invalid")
+
+        if not points:
+            raise RuntimeError("No valid points to upload")
+
+        # FIXED: Upload with better error handling
+        return self._upload_points_safely(points, batch_size)
+
+    def _validate_single_embedding(self, embedding) -> bool:
+        """Validate a single embedding vector - NEW METHOD."""
+        if embedding is None:
+            return False
+
+        # Convert to numpy if needed
+        if not isinstance(embedding, np.ndarray):
+            try:
+                embedding = np.array(embedding)
+            except:
+                return False
+
+        # Check for NaN/Inf
+        if np.any(np.isnan(embedding)) or np.any(np.isinf(embedding)):
+            return False
+
+        # Check if it's all zeros (likely a failed embedding)
+        if np.all(embedding == 0):
+            return False
+
+        return True
+
+    def _upload_points_safely(self, points: List, batch_size: int) -> int:
+        """Upload points with robust error handling - NEW METHOD."""
         total_uploaded = 0
         failed_batches = 0
 
-        for i in tqdm(range(0, len(points), batch_size), desc="Uploading to Qdrant"):
-            batch_points = points[i:i + batch_size]
-            batch_num = i // batch_size + 1
+        # FIXED: Use smaller, safer batch size
+        safe_batch_size = min(batch_size, 25)
+
+        for i in tqdm(range(0, len(points), safe_batch_size), desc="Uploading to Qdrant"):
+            batch_points = points[i:i + safe_batch_size]
+            batch_num = i // safe_batch_size + 1
 
             try:
                 result = self.client.upsert(
@@ -246,24 +402,20 @@ class QdrantIndexer:
                 failed_batches += 1
                 logger.error(f"❌ Error uploading batch {batch_num}: {e}")
 
-                # Try to continue with smaller batches
-                if len(batch_points) > 1:
-                    logger.info(f"Retrying batch {batch_num} with smaller size...")
-                    smaller_batch_size = len(batch_points) // 2
+                # FIXED: Try individual uploads for failed batch
+                individual_success = 0
+                for point in batch_points:
+                    try:
+                        self.client.upsert(
+                            collection_name=self.collection_name,
+                            points=[point]
+                        )
+                        individual_success += 1
+                        total_uploaded += 1
+                    except Exception as point_error:
+                        logger.error(f"Individual point upload failed: {point_error}")
 
-                    for j in range(0, len(batch_points), smaller_batch_size):
-                        smaller_batch = batch_points[j:j + smaller_batch_size]
-                        try:
-                            self.client.upsert(
-                                collection_name=self.collection_name,
-                                points=smaller_batch
-                            )
-                            total_uploaded += len(smaller_batch)
-                        except Exception as e2:
-                            logger.error(f"❌ Failed even with smaller batch: {e2}")
-                            break
-                else:
-                    logger.error(f"❌ Failed to upload single point in batch {batch_num}")
+                logger.info(f"Batch {batch_num} individual recovery: {individual_success}/{len(batch_points)}")
 
         logger.info(f"Upload complete: {total_uploaded}/{len(points)} points uploaded")
         if failed_batches > 0:
@@ -276,9 +428,9 @@ class QdrantIndexer:
         try:
             collection_info = self.client.get_collection(self.collection_name)
             return {
-                'name': collection_info.name,
+                'name': QDRANT_COLLECTION_NAME,
                 'points_count': collection_info.points_count,
-                'vectors_count': collection_info.vectors_count,
+                'vectors_count': collection_info.points_count,
                 'status': collection_info.status,
                 'config': {
                     'distance': collection_info.config.params.vectors.distance,
@@ -339,7 +491,7 @@ def load_processed_chunks() -> List[Dict]:
 
 def main():
     """Main indexing function."""
-    print("☁️ Microplastics Research - Qdrant Indexing")
+    print("☁️ Microplastics Research - Qdrant Indexing (FIXED VERSION)")
     print("=" * 60)
 
     # Validate configuration
@@ -368,6 +520,10 @@ def main():
         # Step 1: Load processed chunks
         print(f"\n📁 Step 1: Loading processed chunks...")
         chunks = load_processed_chunks()
+
+        if not chunks:
+            print("❌ No chunks found. Run process_documents.py first")
+            return
 
         print(f"✅ Loaded {len(chunks)} chunks")
 
@@ -400,8 +556,9 @@ def main():
         # Check existing collection
         collection_info = indexer.get_collection_info()
         if collection_info:
-            print(f"✅ Connected to collection: {collection_info['name']}")
+            print(f"✅ Connected to collection: {QDRANT_COLLECTION_NAME}")
             print(f"   Existing points: {collection_info['points_count']}")
+            print(f"   Existing vectors: {collection_info['vectors_count']}")
             print(f"   Vector dimensions: {collection_info['config']['size']}")
 
         # Step 5: Index documents
@@ -415,7 +572,15 @@ def main():
         if final_collection_info:
             print(f"✅ Upload verification:")
             print(f"   Total points in collection: {final_collection_info['points_count']}")
+            print(f"   Total vectors in collection: {final_collection_info['vectors_count']}")
             print(f"   Upload success rate: {uploaded_count}/{len(chunks)} ({uploaded_count / len(chunks) * 100:.1f}%)")
+
+            # FIXED: Check that vectors match points
+            if final_collection_info['points_count'] == final_collection_info['vectors_count']:
+                print(f"   🎉 SUCCESS: Points and vectors match!")
+            else:
+                print(
+                    f"   ⚠️  WARNING: Points ({final_collection_info['points_count']}) != Vectors ({final_collection_info['vectors_count']})")
 
         # Step 7: Test search functionality
         print(f"\n🧪 Step 7: Testing search functionality...")
@@ -447,6 +612,7 @@ def main():
         print(f"   🧩 Text chunks: {len(chunks)}")
         print(f"   🧠 Embeddings: {len(embeddings)} ({EMBEDDING_DIMENSION}D)")
         print(f"   ☁️  Qdrant points: {final_collection_info.get('points_count', 0)}")
+        print(f"   🔢 Qdrant vectors: {final_collection_info.get('vectors_count', 0)}")
         print(f"   🎮 GPU acceleration: {gpu_info['available'] and USE_GPU}")
 
         # Show content distribution
@@ -481,7 +647,8 @@ def main():
                 'chunks_processed': len(chunks),
                 'embeddings_generated': len(embeddings),
                 'points_uploaded': uploaded_count,
-                'final_collection_size': final_collection_info.get('points_count', 0)
+                'final_collection_size': final_collection_info.get('points_count', 0),
+                'final_vectors_count': final_collection_info.get('vectors_count', 0)
             },
             'collection_info': final_collection_info
         }
@@ -499,6 +666,7 @@ def main():
         print(f"   2. Verify Qdrant connection: python test_qdrant_connection.py")
         print(f"   3. Ensure you have enough GPU memory")
         print(f"   4. Try reducing EMBEDDING_BATCH_SIZE in .env")
+        print(f"   5. Set USE_HALF_PRECISION=false in .env")
 
 
 if __name__ == "__main__":

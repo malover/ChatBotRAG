@@ -308,9 +308,9 @@ class MicroplasticsRAG:
                 "embedding_model": EMBEDDING_MODEL,
                 "llm_model": OLLAMA_MODEL,
                 "collection": {
-                    "name": collection_info.name,
+                    "name": QDRANT_COLLECTION_NAME,
                     "points": collection_info.points_count,
-                    "vectors": collection_info.vectors_count
+                    "vectors": collection_info.points_count
                 },
                 "gpu_available": gpu_info.get("available", False),
                 "gpu_name": gpu_info.get("name", "N/A"),

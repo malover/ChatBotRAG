@@ -27,3 +27,8 @@ numpy==1.24.0
 # Monitoring (optional)
 # psutil==5.9.6  # For monitoring GPU/CPU usage
 # gpustat==1.1.1  # For GPU monitoring
+
+#App
+fastapi
+uvicorn
+streamlit

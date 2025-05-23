@@ -1,18 +1,28 @@
 {
-  "timestamp": "2025-05-22 21:20:02.413593",
+  "timestamp": "2025-05-23 19:18:21.603539",
   "configuration": {
     "embedding_model": "sentence-transformers/all-mpnet-base-v2",
     "embedding_dimension": 768,
     "embedding_batch_size": 12,
-    "qdrant_batch_size": 100,
+    "qdrant_batch_size": 25,
     "use_gpu": true,
-    "use_half_precision": true
+    "use_half_precision": false
   },
   "results": {
     "chunks_processed": 372,
     "embeddings_generated": 372,
     "points_uploaded": 372,
-    "final_collection_size": 0
+    "final_collection_size": 372,
+    "final_vectors_count": null
   },
-  "collection_info": {}
+  "collection_info": {
+    "name": "microplastics_research",
+    "points_count": 372,
+    "vectors_count": null,
+    "status": "green",
+    "config": {
+      "distance": "Cosine",
+      "size": 768
+    }
+  }
 }
